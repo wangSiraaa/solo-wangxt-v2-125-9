@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .config import settings
@@ -129,3 +130,142 @@ def get_repository() -> MemoryRepository | PostgisRepository:
     else:
         _repo = MemoryRepository()
     return _repo
+
+
+# ---------------------------------------------------------------------------
+# 课堂预测练习题次仓储
+# ---------------------------------------------------------------------------
+
+_PREDICTION_MAX = 500
+
+
+class MemoryPredictionStore:
+    """进程内题次仓储（与内存数据源配套，应用重启即清空）。"""
+
+    backend = "memory"
+
+    def __init__(self) -> None:
+        self._records: list[dict] = []
+        self._seq = 0
+
+    def add(self, record: dict) -> dict:
+        self._seq += 1
+        record = dict(record)
+        record["id"] = self._seq
+        record["sequence"] = self._seq
+        self._records.append(record)
+        if len(self._records) > _PREDICTION_MAX:
+            self._records = self._records[-_PREDICTION_MAX:]
+        return record
+
+    def list(self) -> list[dict]:
+        return list(reversed(self._records))
+
+    def get(self, record_id: int) -> dict | None:
+        return next((r for r in self._records if r["id"] == record_id), None)
+
+    def count(self) -> int:
+        return len(self._records)
+
+    def clear(self) -> None:
+        self._records.clear()
+        self._seq = 0
+
+
+class PostgisPredictionStore:
+    """PostgreSQL 持久化题次（record 列为 JSONB 完整文档）。"""
+
+    backend = "postgis"
+
+    def __init__(self, database_url: str) -> None:
+        self.database_url = database_url
+
+    def _connect(self):
+        import psycopg
+
+        return psycopg.connect(self.database_url, connect_timeout=3)
+
+    def add(self, record: dict) -> dict:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO prediction_record (label, parameter, prediction, record)
+                VALUES (%s, %s, %s, %s::jsonb)
+                RETURNING id
+                """,
+                (
+                    record.get("label"),
+                    record["input_summary"]["variable"]["parameter"],
+                    record["prediction"],
+                    json.dumps(record, ensure_ascii=False),
+                ),
+            )
+            new_id = int(cur.fetchone()[0])
+        record = dict(record)
+        record["id"] = new_id
+        record["sequence"] = new_id
+        return record
+
+    @staticmethod
+    def _decode(row) -> dict:
+        rec = row[3] if isinstance(row[3], dict) else json.loads(row[3])
+        # 以表主键为准，避免 JSONB 内 id/sequence 与数据库不一致
+        rec["id"] = row[0]
+        rec["sequence"] = row[0]
+        return rec
+
+    def list(self) -> list[dict]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, created_at, label, record
+                FROM prediction_record ORDER BY id DESC LIMIT %s
+                """,
+                (_PREDICTION_MAX,),
+            )
+            return [self._decode(r) for r in cur.fetchall()]
+
+    def get(self, record_id: int) -> dict | None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, created_at, label, record FROM prediction_record WHERE id = %s",
+                (record_id,),
+            )
+            row = cur.fetchone()
+        return self._decode(row) if row else None
+
+    def count(self) -> int:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM prediction_record")
+            return int(cur.fetchone()[0])
+
+    def clear(self) -> None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("TRUNCATE prediction_record RESTART IDENTITY")
+
+
+_prediction_store: MemoryPredictionStore | PostgisPredictionStore | None = None
+
+
+def get_prediction_store() -> MemoryPredictionStore | PostgisPredictionStore:
+    """题次仓储与主仓储后端保持一致；建表缺失时安全回退内存。"""
+    global _prediction_store
+    if _prediction_store is not None:
+        return _prediction_store
+    repo = get_repository()
+    if repo.backend == "postgis":
+        candidate = PostgisPredictionStore(settings.database_url)
+        try:
+            with candidate._connect() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT to_regclass('public.prediction_record') IS NOT NULL"
+                )
+                if not bool(cur.fetchone()[0]):
+                    raise RuntimeError("prediction_record 表尚未初始化")
+            _prediction_store = candidate
+        except Exception as exc:
+            print(f"[repository] 题次表不可用，题次回退内存仓储: {exc}")
+            _prediction_store = MemoryPredictionStore()
+    else:
+        _prediction_store = MemoryPredictionStore()
+    return _prediction_store

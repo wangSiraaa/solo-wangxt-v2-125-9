@@ -8,12 +8,21 @@ import {
   samplingBoundary,
 } from '../marching'
 import { makeColorFor } from '../colors'
+import { isoLevels } from '../iso-levels'
 
 const props = defineProps<{
   result: PlumeGridResponse | null
   showFill: boolean
   showIso: boolean
   showBg: boolean
+  receptor?: [number, number] | null
+  pickMode?: boolean
+  sourceLonLat?: [number, number] | null
+  fieldMode?: 'plume' | 'total'
+}>()
+
+const emit = defineEmits<{
+  (e: 'map-click', p: { lon: number; lat: number }): void
 }>()
 
 const hover = ref<{
@@ -28,6 +37,7 @@ const hover = ref<{
 
 let map: maplibregl.Map | null = null
 let sourceMarker: maplibregl.Marker | null = null
+let receptorMarker: maplibregl.Marker | null = null
 let rafPending = false
 
 const R = 6371000
@@ -128,6 +138,13 @@ onMounted(() => {
       paint: { 'fill-color': '#0f766e' },
     })
     map!.on('mousemove', onMouseMove)
+    map!.on('click', (e) => {
+      if (props.pickMode) {
+        emit('map-click', { lon: e.lngLat.lng, lat: e.lngLat.lat })
+      }
+    })
+    renderReceptor()
+    renderSourceOnly()
     if (props.result) render(props.result)
   })
 })
@@ -136,6 +153,37 @@ onBeforeUnmount(() => {
   map?.remove()
   map = null
 })
+
+function addSourceMarker(lon: number, lat: number, title: string) {
+  sourceMarker?.remove()
+  const el = document.createElement('div')
+  el.style.cssText =
+    'width:14px;height:14px;border-radius:50%;background:#111827;border:2px solid #fff;box-shadow:0 0 0 1px #111827;cursor:pointer'
+  el.title = title
+  sourceMarker = new maplibregl.Marker({ element: el })
+    .setLngLat([lon, lat])
+    .addTo(map!)
+}
+
+function renderSourceOnly() {
+  if (!map || props.result || !props.sourceLonLat) return
+  addSourceMarker(props.sourceLonLat[0], props.sourceLonLat[1], '排放源')
+}
+
+function renderReceptor() {
+  if (!map) return
+  receptorMarker?.remove()
+  receptorMarker = null
+  if (!props.receptor) return
+  const el = document.createElement('div')
+  el.style.cssText =
+    'width:16px;height:16px;border-radius:2px;background:#dc2626;border:2px solid #fff;' +
+    'box-shadow:0 0 0 1px #7f1d1d;transform:rotate(45deg)'
+  el.title = '固定受体'
+  receptorMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
+    .setLngLat(props.receptor)
+    .addTo(map)
+}
 
 function onMouseMove(e: maplibregl.MapMouseEvent) {
   if (!props.result || rafPending) return
@@ -171,8 +219,7 @@ function onMouseMove(e: maplibregl.MapMouseEvent) {
       bg: r.background_conc_ug_m3,
       xm: r.grid.x_edges_m[bc],
       ym: r.grid.y_edges_m[br],
-    }
-  })
+    }  })
 }
 
 function windArrowFeature(r: PlumeGridResponse): GeoJSON.Feature[] {
@@ -231,13 +278,27 @@ function windArrowFeature(r: PlumeGridResponse): GeoJSON.Feature[] {
 
 function render(r: PlumeGridResponse) {
   if (!map || !map.getSource('fill')) return
-  // 烟羽贡献填色（始终按“烟羽贡献”色带；与背景严格分开）
+  // 场模式：plume 只看烟羽贡献；total 显示 plume+背景 的总量。
+  // 两种模式严格来自响应中的两个矩阵，不修改物理值。
+  const isTotal = props.fieldMode === 'total'
+  const fieldMatrix = isTotal
+    ? r.total_conc_ug_m3
+    : r.plume_field_ug_m3
+  const maxVal = fieldMatrix.reduce(
+    (acc, row) => Math.max(acc, ...row.filter(Number.isFinite)),
+    0,
+  )
+  const levels = isTotal
+    ? isoLevels(maxVal)
+    : r.iso_levels_ug_m3
+
+  // 烟羽贡献/总量填色（色带始终基于当前展示矩阵）
   const fillFC = props.showFill
     ? gridFillPolygons(
-        r.plume_field_ug_m3,
+        fieldMatrix,
         r.grid.lon_grid,
         r.grid.lat_grid,
-        makeColorFor(r.iso_levels_ug_m3),
+        makeColorFor(levels),
         0,
       )
     : { type: 'FeatureCollection' as const, features: [] }
@@ -267,11 +328,11 @@ function render(r: PlumeGridResponse) {
     props.showBg ? 'visible' : 'none',
   )
 
-  // 等值线永远是“烟羽贡献”等值线
+  // 等值线随当前展示场（烟羽或总量）
   const isoFeatures = props.showIso
-    ? r.iso_levels_ug_m3.map((lv) =>
+    ? levels.map((lv) =>
         marchingSquares(
-          r.plume_field_ug_m3,
+          fieldMatrix,
           r.grid.lon_grid,
           r.grid.lat_grid,
           lv,
@@ -294,14 +355,11 @@ function render(r: PlumeGridResponse) {
   } as any)
 
   // 源点标记
-  sourceMarker?.remove()
-  const el = document.createElement('div')
-  el.style.cssText =
-    'width:14px;height:14px;border-radius:50%;background:#111827;border:2px solid #fff;box-shadow:0 0 0 1px #111827;'
-  el.title = r.source_term.name
-  sourceMarker = new maplibregl.Marker({ element: el })
-    .setLngLat(r.source_lonlat)
-    .addTo(map)
+  addSourceMarker(
+    r.source_lonlat[0],
+    r.source_lonlat[1],
+    r.source_term.name,
+  )
 
   const ext = r.grid.sampling_extent_lonlat
   map.fitBounds(
@@ -321,6 +379,7 @@ function clearMap() {
   }
   sourceMarker?.remove()
   sourceMarker = null
+  if (!props.result) renderSourceOnly()
 }
 
 watch(
@@ -331,9 +390,25 @@ watch(
   },
 )
 watch(
-  () => [props.showFill, props.showIso, props.showBg],
+  () => [props.showFill, props.showIso, props.showBg, props.fieldMode],
   () => {
     if (props.result) render(props.result)
+  },
+)
+watch(
+  () => props.receptor,
+  () => renderReceptor(),
+)
+watch(
+  () => props.sourceLonLat,
+  () => {
+    if (!props.result) renderSourceOnly()
+  },
+)
+watch(
+  () => props.pickMode,
+  (on) => {
+    if (map) map.getCanvas().style.cursor = on ? 'crosshair' : ''
   },
 )
 </script>
@@ -347,6 +422,9 @@ watch(
         {{ result.grid.spacing_crosswind_m.toFixed(0) }} m（下风向/横风向）
       </div>
       <div class="muted">虚线矩形＝采样边界，结果不外推到界外</div>
+    </div>
+    <div v-if="pickMode" class="pickhint notice info">
+      在地图上点击选择固定受体位置（经纬度）
     </div>
     <div v-if="hover" class="legend" style="width: 250px">
       <div><b>最近采样点</b>（x={{ hover.xm.toFixed(0) }} m, y={{ hover.ym.toFixed(0) }} m）</div>

@@ -117,7 +117,7 @@ C(x,y,0) = Q / (π·u·σy·σz) · exp(−y²/(2σy²)) · exp(−He²/(2σz²)
 运行后端测试：
 
 ```bash
-cd backend && python3 -m pytest tests/ -q     # 9 passed
+cd backend && python3 -m pytest tests/ -q     # 16 passed（含预测练习 7 项）
 ```
 
 前端工具：
@@ -127,11 +127,10 @@ cd frontend
 npm run build                  # vue-tsc 类型检查 + vite 构建
 npx tsx scripts/smoke-contours.ts   # marching squares 数值冒烟
 npx tsx scripts/e2e.ts              # 需 Playwright Chromium：渲染/静风/核对
+npx tsx scripts/e2e-predict.ts      # 需 Playwright Chromium：预测练习全流程/静风留题/历史复看
 ```
 
-## 5. API 一览
-
-```
+## 5. API 一览```
 GET  /api/health
 GET  /api/meta                   单位约定/稳定度/Briggs 系数/静风阈值
 GET  /api/sources[/id]           虚构排放源（PostGIS 或内存）
@@ -141,11 +140,52 @@ POST /api/plume/points           任意经纬度点求值（核对用）
 GET  /api/plume/wind-check       风向↔坐标换算检查
 POST /api/plume/rise             Holland 抬升明细
 GET  /api/checks                 10 条解析核对
+
+课堂预测练习（先预测、后揭晓，见 §8）：
+POST /api/predictions           提交预测（固定受体+基准输入+一项可变参数），
+                                服务端用同一物理模型独立计算基准/变体两次
+GET  /api/predictions           历史题次列表（摘要，不含大网格矩阵）
+GET  /api/predictions/{id}      题次详情（含两次完整网格场，供前端复看）
 ```
 
 交互文档：http://localhost:8000/docs 。
 
-## 6. 目录
+## 6. 课堂预测练习（先预测、后看结果）
+
+顶部切换到「课堂预测练习」页签：
+
+1. **教师配题**：选排放源/气象基准输入（烟囱高、Q、u、风向、稳定度、背景、
+   是否开启 Holland 抬升、参数化），在地图点选或一键放置**固定受体**，
+   并选择**唯一一项可变参数**（烟囱高 / 风速 / 排放率）与变体取值；
+2. **学生预测**：锁定题目后界面只显示输入摘要、不触发也不展示任何计算，
+   学生提交方向预测（升高 ↑ / 降低 ↓ / 基本不变 ≈）；
+3. **揭晓**：系统才用现有高斯烟羽模型对**同一受体**独立计算两次，
+   展示受体处两次的**烟羽 / 背景 / 总量**浓度与差值（变−基），
+   地图可切换基准/变体 × 烟羽场/总量场；
+4. **保存与复看**：题次、输入摘要、预测、两次计算结果与判定一并保存
+   （PostGIS `prediction_record` 表；无数据库时进程内仓储 +
+   前端 localStorage 镜像），右侧「历史题次」可随时复看。
+
+判定原则（重要）：
+
+- 方向**只**比较受体处两次实际总浓度，容差
+  `max(1e-9·相对, 1e-9 μg/m³)`，服务端没有任何“升高/降低”判定分支口诀；
+- **排放率翻倍**可与解析结果核对：背景不变时受体烟羽严格 ×2、
+  总浓度增量恰等于一份烟羽值（后端测试
+  `test_emission_double_direction_and_analytical_ratio`）；
+- **改变源高**一律以受体实际结果判定。注意本模型中 σy/σz 不依赖 H，
+  固定受体上高烟囱地面浓度单调更低，但“降低源高”在近受体处是升高、
+  极远处微小变化会落入容差判“基本不变”——背口诀会判错
+  （`test_source_height_judged_by_actual_receptor_not_rule`）；
+- **风速方向并非处处降低**：开启 Holland 抬升时 u 增大会同时压低 Δh，
+  近受体浓度可以反而升高；关闭抬升时才回到 1/u 的单调下降
+  （`test_wind_speed_not_hardcoded_as_always_down`）；
+- **静风变体**：`u < calm_threshold` 时变体 `computable=false`、
+  `reason=calm_wind`，结构中**没有任何浓度或网格字段**（不填零），
+  题次与学生原预测照常保存、不判对错；基准本身静风则 422 拒绝
+  （题目不成立）（`test_calm_variant_keeps_prediction_without_fake_concentration`）。
+
+## 7. 目录
 
 ```
 backend/app/
@@ -155,14 +195,17 @@ backend/app/
   plume_rise.py     Holland 抬升
   checks.py         10 条解析核对（API 与 pytest 共用）
   services.py       网格构造、override 合并、等值级、响应组装
-  repository.py     PostGIS 仓储 / 内存回退
+  predictions.py    课堂预测练习：两次独立计算、受体差值、方向判定、静风留题
+  repository.py     PostGIS 仓储 / 内存回退（含 prediction_record 题次仓储）
 frontend/src/
-  components/MapView.vue       MapLibre 图层（烟羽/等值线/背景/采样框/风矢）
+  components/MapView.vue       MapLibre 图层（烟羽/总量/等值线/背景/采样框/风矢/受体）
+  components/PredictionPanel.vue       配题 + 学生预测两步面板
+  components/PredictionResultPanel.vue 揭晓判定 + 受体差值表 + 历史题次复看
   marching.ts                  marching squares（无第三方几何库）
-db/init.sql        PostGIS 建表 + 虚构数据
+db/init.sql        PostGIS 建表 + 虚构数据 + prediction_record 题次表
 ```
 
-## 7. 虚构数据
+## 8. 虚构数据
 
 所有排放源（示范热电厂、化工厂加热炉、水泥厂排气筒）与气象情景
 （中性大风、不稳定晴昼、稳定夜间、**静风**、弱风 C 类）

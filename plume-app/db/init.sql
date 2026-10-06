@@ -70,3 +70,18 @@ SELECT setval(
     pg_get_serial_sequence('meteorology_scenario', 'id'),
     (SELECT MAX(id) FROM meteorology_scenario)
 );
+
+-- 课堂预测练习题次：保存题次、输入摘要、预测与两次计算结果（JSONB 文档）。
+-- 无数据库连接时后端回退进程内内存仓储，前端同时镜像到 localStorage。
+CREATE TABLE IF NOT EXISTS prediction_record (
+    id           SERIAL PRIMARY KEY,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    label        TEXT,
+    parameter    TEXT NOT NULL
+        CHECK (parameter IN ('stack_height_m','wind_speed_ms','emission_rate_g_s')),
+    prediction   CHAR(4) NOT NULL CHECK (prediction IN ('up','down','same')),
+    record       JSONB NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_prediction_record_created
+    ON prediction_record (created_at DESC);

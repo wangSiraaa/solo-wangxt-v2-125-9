@@ -10,11 +10,20 @@ POST /api/plume/points          任意经纬度点浓度（核对用）
 GET  /api/plume/wind-check      风向↔地图坐标换算检查
 POST /api/plume/rise            Holland 抬升高程明细
 GET  /api/checks                解析核对用例结果
+
+课堂预测练习（先提交方向预测，再展示两次实际计算）：
+POST /api/predictions           提交预测（固定受体+基准输入+一项可变参数），
+                                服务端独立计算基准/变体两次并判定方向
+GET  /api/predictions           历史题次列表（不含完整网格矩阵）
+GET  /api/predictions/{id}      单个题次详情（含两次完整网格场）
 """
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from .checks import run_all_checks
 from .config import settings
@@ -26,6 +35,12 @@ from .dispersion import (
 from .gaussian import CalmWindError, PlumeInputError
 from .geometry import wind_transform_check
 from .plume_rise import holland_plume_rise
+from .predictions import (
+    store_count,
+    store_get,
+    store_summarized_list,
+    submit_prediction,
+)
 from .repository import get_repository
 from .schemas import (
     PlumeGridRequest,
@@ -52,8 +67,6 @@ app.add_middleware(
 
 @app.exception_handler(CalmWindError)
 async def calm_wind_handler(_request, exc: CalmWindError):
-    from fastapi.responses import JSONResponse
-
     return JSONResponse(
         status_code=422,
         content={
@@ -61,6 +74,24 @@ async def calm_wind_handler(_request, exc: CalmWindError):
             "message": str(exc),
             "action": "静风条件下定常烟羽模型不适用；请提高风速或改用静风扩散模型。",
         },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_handler(_request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content={"error": "invalid_input", "message": "请求参数不合法",
+                 "details": exc.errors()},
+    )
+
+
+@app.exception_handler(ValidationError)
+async def pydantic_validation_handler(_request, exc: ValidationError):
+    return JSONResponse(
+        status_code=422,
+        content={"error": "invalid_input", "message": "请求参数不合法",
+                 "details": exc.errors()},
     )
 
 
@@ -195,3 +226,30 @@ def plume_rise(payload: dict):
 @app.get("/api/checks")
 def checks():
     return run_all_checks()
+
+
+# ---------------------------------------------------------------------------
+# 课堂预测练习
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/predictions")
+def create_prediction(payload: dict):
+    """提交方向预测；基准/变体由现有物理模型各独立计算一次。
+
+    静风变体不作为错误：题次与原预测照常保存，变体标记不可计算、不含浓度。
+    """
+    return submit_prediction(payload)
+
+
+@app.get("/api/predictions")
+def list_predictions():
+    return {"items": store_summarized_list(), "count": store_count()}
+
+
+@app.get("/api/predictions/{record_id}")
+def get_prediction(record_id: int):
+    row = store_get(record_id)
+    if row is None:
+        raise HTTPException(404, "题次不存在")
+    return row

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .dispersion import STABILITY_CLASSES
 
@@ -121,3 +121,32 @@ class PlumePointRequest(PlumeGridRequest):
 
 class PlumePointResponse(BaseModel):
     points: list[dict]
+
+
+class PredictionExerciseRequest(BaseModel):
+    """课堂预测练习请求。
+
+    * base_request 与常规网格请求完全相同（现有物理模型，不另起公式）；
+    * receptor_lonlat 为教师选定的**固定受体**（独立于采样网格的点求值）；
+    * parameter 为唯一可变参数：烟囱高 / 风速 / 排放率；
+    * variant_value 为该参数的变体取值；
+    * prediction 为学生在看到结果前提交的方向（升高/降低/基本不变）。
+    """
+
+    base_request: PlumeGridRequest
+    receptor_lonlat: tuple[float, float] = Field(
+        ..., description="固定受体 [lon, lat]，两次计算为同一物理点"
+    )
+    parameter: Literal["stack_height_m", "wind_speed_ms", "emission_rate_g_s"]
+    variant_value: float = Field(..., ge=0.0, description="可变参数的变体取值")
+    prediction: Literal["up", "down", "same"] = Field(
+        ..., description="学生方向预测：up 升高 / down 降低 / same 基本不变"
+    )
+    label: str | None = Field(None, max_length=80, description="可选题次备注")
+
+    @model_validator(mode="after")
+    def _validate_receptor(self):
+        lon, lat = self.receptor_lonlat
+        if not -180.0 <= lon <= 180.0 or not -85.0 <= lat <= 85.0:
+            raise ValueError("受体经纬度越界（lon [-180,180], lat [-85,85]）")
+        return self
