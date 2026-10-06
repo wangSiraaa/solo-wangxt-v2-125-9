@@ -116,3 +116,64 @@ export interface ApiError {
   message: string
   action?: string
 }
+
+// ---- 课堂预测练习 ----
+
+export type DirectionChoice = 'increase' | 'decrease' | 'unchanged'
+export type VariableParam =
+  | 'stack_height_m'
+  | 'wind_speed_ms'
+  | 'emission_rate_g_s'
+
+export interface ReceptorSpec {
+  downwind_m: number
+  crosswind_m: number
+}
+
+export interface PredictionExerciseRequest {
+  source: SourceInput
+  meteorology: MeteorologyInput
+  receptor: ReceptorSpec
+  variable_param: VariableParam
+  variant_value: number
+  prediction: DirectionChoice
+  plume_rise: { use_plume_rise: boolean }
+  parameterization: 'briggs_rural' | 'power_law'
+  power_law?: { ay: number; py: number; az: number; pz: number } | null
+  calm_threshold_ms: number
+}
+
+export interface ReceptorConcentration {
+  plume_conc_ug_m3: number
+  background_conc_ug_m3: number
+  total_conc_ug_m3: number
+}
+
+export interface ScenarioSnapshot {
+  stack_height_m: number
+  wind_speed_ms: number
+  emission_rate_g_s: number
+  effective_stack_height_m: number
+  plume_rise_delta_h_m: number
+  concentration: ReceptorConcentration
+}
+
+export interface PredictionRecord {
+  id: number
+  created_at: string
+  variable_param: VariableParam
+  baseline_value: number
+  variant_value: number
+  receptor: ReceptorSpec
+  prediction: DirectionChoice
+  input_summary: Record<string, any>
+  computable: boolean
+  not_computable_reason: string | null
+  baseline_result: ScenarioSnapshot | null
+  variant_result: ScenarioSnapshot | null
+  delta_plume_ug_m3: number | null
+  delta_total_ug_m3: number | null
+  actual_direction: DirectionChoice | null
+  correct: boolean | null
+  direction_note: string
+}

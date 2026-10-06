@@ -121,3 +121,48 @@ class PlumePointRequest(PlumeGridRequest):
 
 class PlumePointResponse(BaseModel):
     points: list[dict]
+
+
+# ---------------------------------------------------------------------------
+# 课堂预测练习
+# ---------------------------------------------------------------------------
+
+#: 允许变动的参数（每次练习只动一项，其余输入保持基准值）
+VariableParam = Literal["stack_height_m", "wind_speed_ms", "emission_rate_g_s"]
+
+#: 学生对受体浓度变化方向的预测
+DirectionChoice = Literal["increase", "decrease", "unchanged"]
+
+
+class ReceptorSpec(BaseModel):
+    """固定受体位置：以源为原点、随风向定的烟羽坐标（米）。
+
+    用烟羽坐标而非经纬度，使受体定义与采样网格无关、可精确复算；
+    风向在本练习中不变，故受体位置在两次计算间保持一致。
+    """
+
+    downwind_m: float = Field(..., gt=0.0, le=50_000.0, description="下风向距离 m")
+    crosswind_m: float = Field(
+        0.0, ge=-20_000.0, le=20_000.0, description="横风向距离 m（风左侧为正）"
+    )
+
+
+class PredictionExerciseRequest(BaseModel):
+    """一次预测练习：基准输入 + 一项可变参数 + 学生方向预测。
+
+    服务器在同一请求内先落盘预测，再用与 /api/plume/* 完全相同的
+    物理模型做基准/变体两次实际计算，由受体处总浓度差判定实际方向。
+    """
+
+    source: SourceInput
+    meteorology: MeteorologyInput
+    receptor: ReceptorSpec
+    variable_param: VariableParam
+    variant_value: float = Field(..., ge=0.0, description="可变参数的新值")
+    prediction: DirectionChoice
+    plume_rise: PlumeRiseInput = Field(default_factory=PlumeRiseInput)
+    parameterization: Literal["briggs_rural", "power_law"] = "briggs_rural"
+    power_law: dict | None = Field(
+        None, description="power_law 参数: ay, py, az, pz（均为正）"
+    )
+    calm_threshold_ms: float = Field(1.0, gt=0.0, le=5.0)

@@ -3,9 +3,13 @@
 表结构见 db/init.sql（PostGIS，geometry(Point,4326)，带 GIST 索引）。
 运行时每个请求短连接；DATABASE_URL 未设置或连接失败时，
 透明回退到 seed_data 内存数据，并在 /api/health 标明后端类型。
+
+预测练习记录（prediction_exercise 表 / 内存列表）：
+保存题次、输入摘要、学生预测与两次实际计算结果，供前端复看历史题次。
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from .config import settings
@@ -27,6 +31,8 @@ class MemoryRepository:
     def __init__(self) -> None:
         self.sources = [dict(s) for s in SEED_SOURCES]
         self.meteorology = [dict(m) for m in SEED_METEOROLOGY]
+        self.predictions: list[dict] = []
+        self._prediction_seq = 0
 
     def list_sources(self) -> list[dict]:
         return [dict(s) for s in self.sources]
@@ -39,6 +45,27 @@ class MemoryRepository:
 
     def get_meteorology(self, met_id: int) -> dict | None:
         return next((dict(m) for m in self.meteorology if m["id"] == met_id), None)
+
+    # ---- 预测练习记录 ----
+
+    def add_prediction(self, record: dict) -> dict:
+        self._prediction_seq += 1
+        stored = {
+            "id": self._prediction_seq,
+            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            **record,
+        }
+        self.predictions.append(stored)
+        return dict(stored)
+
+    def list_predictions(self) -> list[dict]:
+        # 最新题次在前
+        return [dict(p) for p in reversed(self.predictions)]
+
+    def get_prediction(self, prediction_id: int) -> dict | None:
+        return next(
+            (dict(p) for p in self.predictions if p["id"] == prediction_id), None
+        )
 
 
 class PostgisRepository:
@@ -106,6 +133,78 @@ class PostgisRepository:
             )
             rows = self._rows(cur, _MET_COLS)
             return rows[0] if rows else None
+
+    # ---- 预测练习记录 ----
+
+    _prediction_table_ready = False
+
+    def _ensure_prediction_table(self, cur) -> None:
+        """建表幂等：init.sql 已建则跳过；老库升级时自动补齐。"""
+        if self._prediction_table_ready:
+            return
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS prediction_exercise (
+                id          SERIAL PRIMARY KEY,
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                payload     JSONB NOT NULL
+            )
+            """
+        )
+        self._prediction_table_ready = True
+
+    def add_prediction(self, record: dict) -> dict:
+        from psycopg.types.json import Jsonb
+
+        with self._connect() as conn, conn.cursor() as cur:
+            self._ensure_prediction_table(cur)
+            cur.execute(
+                "INSERT INTO prediction_exercise (payload) VALUES (%s) "
+                "RETURNING id, created_at",
+                (Jsonb(record),),
+            )
+            pid, created_at = cur.fetchone()
+            conn.commit()
+        return {
+            "id": int(pid),
+            "created_at": created_at.isoformat(timespec="seconds"),
+            **record,
+        }
+
+    def list_predictions(self) -> list[dict]:
+        with self._connect() as conn, conn.cursor() as cur:
+            self._ensure_prediction_table(cur)
+            cur.execute(
+                "SELECT id, created_at, payload FROM prediction_exercise "
+                "ORDER BY id DESC"
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "id": int(pid),
+                "created_at": created_at.isoformat(timespec="seconds"),
+                **payload,
+            }
+            for pid, created_at, payload in rows
+        ]
+
+    def get_prediction(self, prediction_id: int) -> dict | None:
+        with self._connect() as conn, conn.cursor() as cur:
+            self._ensure_prediction_table(cur)
+            cur.execute(
+                "SELECT id, created_at, payload FROM prediction_exercise "
+                "WHERE id = %s",
+                (prediction_id,),
+            )
+            rows = cur.fetchall()
+        if not rows:
+            return None
+        pid, created_at, payload = rows[0]
+        return {
+            "id": int(pid),
+            "created_at": created_at.isoformat(timespec="seconds"),
+            **payload,
+        }
 
 
 _repo: MemoryRepository | PostgisRepository | None = None

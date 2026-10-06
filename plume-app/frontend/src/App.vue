@@ -4,7 +4,7 @@ import ControlPanel from './components/ControlPanel.vue'
 import MapView from './components/MapView.vue'
 import ResultPanel from './components/ResultPanel.vue'
 import { api } from './api'
-import { DEFAULT_FORM, type FormState } from './form'
+import { DEFAULT_FORM, scenarioFromForm, type FormState } from './form'
 import type {
   MetRow,
   PlumeGridResponse,
@@ -95,27 +95,9 @@ async function run() {
   error.value = null
   const s = sources.value.find((x) => x.id === form.value.sourceId)!
   try {
+    const scenario = scenarioFromForm(form.value, s)
     result.value = await api.plumeGrid({
-      source: {
-        name: s.name,
-        lon: s.lon,
-        lat: s.lat,
-        stack_height_m: form.value.stackHeight,
-        emission_rate_g_s: form.value.emission,
-        stack_diameter_m: form.value.stackDia,
-        exit_velocity_ms: form.value.exitV,
-        stack_temp_k: form.value.stackT,
-        pollutant: s.pollutant,
-      },
-      meteorology: {
-        name: '界面情景',
-        wind_from_deg: form.value.windFrom,
-        wind_speed_ms: form.value.windSpeed,
-        stability_class: form.value.stability,
-        ambient_temp_k: form.value.ambientT,
-        pressure_hpa: form.value.pressure,
-        background_conc_ug_m3: form.value.background,
-      },
+      ...scenario,
       grid: {
         downwind_extent_m: form.value.downwindExtent,
         crosswind_extent_m: form.value.crosswindExtent,
@@ -123,13 +105,6 @@ async function run() {
         nx: form.value.nx,
         ny: form.value.ny,
       },
-      plume_rise: { use_plume_rise: form.value.useRise },
-      parameterization: form.value.parameterization,
-      power_law:
-        form.value.parameterization === 'power_law'
-          ? { ay: form.value.ay, py: form.value.py, az: form.value.az, pz: form.value.pz }
-          : null,
-      calm_threshold_ms: form.value.calmThreshold,
     })
   } catch (e: any) {
     result.value = null
@@ -217,6 +192,6 @@ const stops = computed(() =>
       </div>
     </div>
 
-    <ResultPanel :result="result" :error="error" />
+    <ResultPanel :result="result" :error="error" :form="form" :sources="sources" />
   </div>
 </template>

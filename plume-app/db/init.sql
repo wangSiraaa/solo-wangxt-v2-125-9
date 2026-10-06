@@ -35,6 +35,13 @@ CREATE TABLE IF NOT EXISTS meteorology_scenario (
 CREATE INDEX IF NOT EXISTS idx_emission_source_geom
     ON emission_source USING GIST (location);
 
+-- 课堂预测练习记录：题次、输入摘要、预测与两次实算结果（JSONB 自描述）
+CREATE TABLE IF NOT EXISTS prediction_exercise (
+    id          SERIAL PRIMARY KEY,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    payload     JSONB NOT NULL
+);
+
 -- 幂等灌入虚构数据
 INSERT INTO emission_source
     (id, name, pollutant, location, stack_height_m, emission_rate_g_s,

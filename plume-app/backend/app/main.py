@@ -10,6 +10,9 @@ POST /api/plume/points          任意经纬度点浓度（核对用）
 GET  /api/plume/wind-check      风向↔地图坐标换算检查
 POST /api/plume/rise            Holland 抬升高程明细
 GET  /api/checks                解析核对用例结果
+POST /api/predictions           课堂预测练习：先存预测，再两次实算并判定方向
+GET  /api/predictions           历史题次（复看用）
+GET  /api/predictions/{id}      单条题次详情
 """
 from __future__ import annotations
 
@@ -26,6 +29,12 @@ from .dispersion import (
 from .gaussian import CalmWindError, PlumeInputError
 from .geometry import wind_transform_check
 from .plume_rise import holland_plume_rise
+from .predictions import (
+    DIRECTION_LABELS,
+    DIRECTION_NOTE,
+    VARIABLE_PARAM_META,
+    run_prediction_exercise,
+)
 from .repository import get_repository
 from .schemas import (
     PlumeGridRequest,
@@ -33,6 +42,7 @@ from .schemas import (
     PlumePointRequest,
     PlumePointResponse,
     PlumeRiseInput,
+    PredictionExerciseRequest,
 )
 from .services import DISCLAIMER, run_grid, run_points
 
@@ -124,6 +134,18 @@ def meta():
             ),
             "default_enabled": False,
         },
+        "prediction_exercise": {
+            "endpoint": "POST /api/predictions",
+            "variable_params": [
+                {"key": key, "label": m["label"], "unit": m["unit"]}
+                for key, m in VARIABLE_PARAM_META.items()
+            ],
+            "directions": [
+                {"key": key, "label": label}
+                for key, label in DIRECTION_LABELS.items()
+            ],
+            "direction_policy": DIRECTION_NOTE,
+        },
         "grid_limits": {
             "max_points_per_axis": settings.grid_max_points_per_axis,
             "min_spacing_m": settings.grid_min_spacing_m,
@@ -195,3 +217,27 @@ def plume_rise(payload: dict):
 @app.get("/api/checks")
 def checks():
     return run_all_checks()
+
+
+@app.post("/api/predictions", status_code=201)
+def create_prediction(req: PredictionExerciseRequest):
+    """课堂预测练习：同一请求内先落盘学生预测，再做基准/变体两次实算。
+
+    静风等不可计算情形不会 422——记录照常保存（保留原预测），
+    computable=False 且不产生任何浓度数值。
+    """
+    record = run_prediction_exercise(req)
+    return get_repository().add_prediction(record)
+
+
+@app.get("/api/predictions")
+def list_predictions():
+    return get_repository().list_predictions()
+
+
+@app.get("/api/predictions/{prediction_id}")
+def get_prediction(prediction_id: int):
+    row = get_repository().get_prediction(prediction_id)
+    if row is None:
+        raise HTTPException(404, "预测题次不存在")
+    return row

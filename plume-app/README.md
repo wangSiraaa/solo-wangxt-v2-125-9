@@ -117,7 +117,7 @@ C(x,y,0) = Q / (π·u·σy·σz) · exp(−y²/(2σy²)) · exp(−He²/(2σz²)
 运行后端测试：
 
 ```bash
-cd backend && python3 -m pytest tests/ -q     # 9 passed
+cd backend && python3 -m pytest tests/ -q     # 16 passed（含预测练习 7 条）
 ```
 
 前端工具：
@@ -127,13 +127,14 @@ cd frontend
 npm run build                  # vue-tsc 类型检查 + vite 构建
 npx tsx scripts/smoke-contours.ts   # marching squares 数值冒烟
 npx tsx scripts/e2e.ts              # 需 Playwright Chromium：渲染/静风/核对
+npx tsx scripts/e2e-predict.ts      # 预测练习：出题→预测→揭示→历史→静风变体
 ```
 
 ## 5. API 一览
 
 ```
 GET  /api/health
-GET  /api/meta                   单位约定/稳定度/Briggs 系数/静风阈值
+GET  /api/meta                   单位约定/稳定度/Briggs 系数/静风阈值/预测练习元数据
 GET  /api/sources[/id]           虚构排放源（PostGIS 或内存）
 GET  /api/meteorology[/id]       虚构气象情景
 POST /api/plume/grid             采样网格浓度（烟羽/背景/总量分开）
@@ -141,11 +142,43 @@ POST /api/plume/points           任意经纬度点求值（核对用）
 GET  /api/plume/wind-check       风向↔坐标换算检查
 POST /api/plume/rise             Holland 抬升明细
 GET  /api/checks                 10 条解析核对
+POST /api/predictions            课堂预测练习：先存预测，再两次实算并判定方向
+GET  /api/predictions[/id]       历史题次列表 / 单条详情（复看用）
 ```
 
 交互文档：http://localhost:8000/docs 。
 
-## 6. 目录
+## 6. 课堂预测练习
+
+学生在看计算结果前，先猜测“改变一个参数会让某个受体的浓度升高还是降低”。
+
+流程（前端“预测练习”页签）：
+
+1. **教师出题**：选定固定受体（下风向 x / 横风向 y，米）、一项可变参数
+   （烟囱高 H、风速 u 或排放率 Q）及其新值；基准输入＝控制面板当前值。
+2. **学生提交方向预测**（升高 / 降低 / 基本不变）。提交前界面不显示任何
+   本题计算结果。
+3. **系统揭示**：`POST /api/predictions` 在同一请求内**先落盘预测**，
+   再用与 `/api/plume/*` 完全相同的物理模型做基准/变体两次受体点计算，
+   返回烟羽/背景/总量及差值，并由**受体处总浓度差的符号**判定实际方向。
+4. **保存与复看**：题次（id）、输入摘要、预测与两次实算结果存入
+   `prediction_exercise` 表（无数据库时为内存列表），
+   `GET /api/predictions` 复看历史题次。
+
+关键约束（对应验收）：
+
+- **排放率翻倍可按解析核对**：高斯式对 Q 线性，受体烟羽浓度恰翻倍，
+  Δtotal = 基准烟羽值（`tests/test_predictions.py` 以 1e-12 相对容差断言）。
+- **源高方向以受体实际结果判定**：系统不查“源高必降”之类的口诀——
+  同一 60→120 m 变化，在 x=1000 m 受体判“降低”，
+  在远偏轴受体（烟羽贡献为零）判“基本不变”。
+- **不写死“风速越大必然处处降低”**：开启烟气抬升后 Δh∝1/u，
+  风速增大压低有效源高，近-中场受体浓度可能反而升高
+  （有专门测试用例守卫此反例）。
+- **静风变体不可计算**：变体风速低于阈值时记录照常保存、
+  原预测保留，`computable=false` 且不产生任何浓度数值。
+
+## 7. 目录
 
 ```
 backend/app/
@@ -154,12 +187,14 @@ backend/app/
   geometry.py       风向、E/N 平面、经纬度换算（含单位向量核对）
   plume_rise.py     Holland 抬升
   checks.py         10 条解析核对（API 与 pytest 共用）
+  predictions.py    预测练习：先存预测、两次实算、按受体差值判方向
   services.py       网格构造、override 合并、等值级、响应组装
-  repository.py     PostGIS 仓储 / 内存回退
+  repository.py     PostGIS 仓储 / 内存回退（含预测题次存取）
 frontend/src/
-  components/MapView.vue       MapLibre 图层（烟羽/等值线/背景/采样框/风矢）
-  marching.ts                  marching squares（无第三方几何库）
-db/init.sql        PostGIS 建表 + 虚构数据
+  components/MapView.vue         MapLibre 图层（烟羽/等值线/背景/采样框/风矢）
+  components/PredictionPanel.vue 预测练习（出题/预测/揭示/历史复看）
+  marching.ts                    marching squares（无第三方几何库）
+db/init.sql        PostGIS 建表 + 虚构数据 + prediction_exercise 表
 ```
 
 ## 7. 虚构数据

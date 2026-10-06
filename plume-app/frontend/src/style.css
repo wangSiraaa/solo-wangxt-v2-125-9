@@ -153,6 +153,12 @@ details.params summary { cursor: pointer; color: var(--muted); font-size: 12px; 
 
 .toggle { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; }
 
+.pred-radios {
+  display: flex; gap: 14px; margin: 6px 0 10px;
+  padding: 7px 9px; border: 1px dashed var(--line); border-radius: 5px;
+}
+.pred-radios .toggle { margin-bottom: 0; }
+
 .disclaimer-foot {
   position: absolute; left: 50%; transform: translateX(-50%);
   bottom: 8px; z-index: 4; font-size: 10px; color: #7a8794;

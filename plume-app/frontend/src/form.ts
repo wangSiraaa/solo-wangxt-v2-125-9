@@ -26,6 +26,51 @@ export interface FormState {
   calmThreshold: number
 }
 
+import type { MeteorologyInput, SourceInput, SourceRow } from './types'
+
+/** 由面板表单 + 源记录组装模型输入（主计算与预测练习共用，保证基准一致）。 */
+export function scenarioFromForm(
+  form: FormState,
+  s: SourceRow,
+): {
+  source: SourceInput
+  meteorology: MeteorologyInput
+  plume_rise: { use_plume_rise: boolean }
+  parameterization: 'briggs_rural' | 'power_law'
+  power_law: { ay: number; py: number; az: number; pz: number } | null
+  calm_threshold_ms: number
+} {
+  return {
+    source: {
+      name: s.name,
+      lon: s.lon,
+      lat: s.lat,
+      stack_height_m: form.stackHeight,
+      emission_rate_g_s: form.emission,
+      stack_diameter_m: form.stackDia,
+      exit_velocity_ms: form.exitV,
+      stack_temp_k: form.stackT,
+      pollutant: s.pollutant,
+    },
+    meteorology: {
+      name: '界面情景',
+      wind_from_deg: form.windFrom,
+      wind_speed_ms: form.windSpeed,
+      stability_class: form.stability,
+      ambient_temp_k: form.ambientT,
+      pressure_hpa: form.pressure,
+      background_conc_ug_m3: form.background,
+    },
+    plume_rise: { use_plume_rise: form.useRise },
+    parameterization: form.parameterization,
+    power_law:
+      form.parameterization === 'power_law'
+        ? { ay: form.ay, py: form.py, az: form.az, pz: form.pz }
+        : null,
+    calm_threshold_ms: form.calmThreshold,
+  }
+}
+
 export const DEFAULT_FORM: FormState = {
   sourceId: 1,
   metId: 1,

@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import type { ChecksReport, PlumeGridResponse } from '../types'
+import type { ChecksReport, PlumeGridResponse, SourceRow } from '../types'
+import type { FormState } from '../form'
 import { api } from '../api'
 import { legendStops } from '../colors'
+import PredictionPanel from './PredictionPanel.vue'
 
 const props = defineProps<{
   result: PlumeGridResponse | null
   error: string | null
+  form: FormState
+  sources: SourceRow[]
 }>()
 
-const tab = ref<'result' | 'wind' | 'checks'>('result')
+const tab = ref<'result' | 'wind' | 'checks' | 'predict'>('result')
 const checks = ref<ChecksReport | null>(null)
 const checksError = ref('')
 const windInput = ref(270)
@@ -68,7 +72,18 @@ function fmt(v: number, d = 2) {
       <button :class="{ active: tab === 'checks' }" @click="tab = 'checks'">
         解析核对
       </button>
+      <button
+        data-test="tab-predict"
+        :class="{ active: tab === 'predict' }"
+        @click="tab = 'predict'"
+      >
+        预测练习
+      </button>
     </div>
+
+    <template v-if="tab === 'predict'">
+      <PredictionPanel :form="form" :sources="sources" />
+    </template>
 
     <template v-if="tab === 'result'">
       <div v-if="error" class="notice err">{{ error }}</div>

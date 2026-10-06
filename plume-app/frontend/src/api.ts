@@ -3,6 +3,8 @@ import type {
   MetRow,
   PlumeGridRequest,
   PlumeGridResponse,
+  PredictionExerciseRequest,
+  PredictionRecord,
   SourceRow,
 } from './types'
 
@@ -41,4 +43,14 @@ export const api = {
       `/api/plume/wind-check?wind_from_deg=${encodeURIComponent(windFromDeg)}`,
     ).then((r) => jsonOrThrow<any>(r)),
   checks: () => fetch('/api/checks').then((r) => jsonOrThrow<ChecksReport>(r)),
+  createPrediction: (req: PredictionExerciseRequest) =>
+    fetch('/api/predictions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    }).then((r) => jsonOrThrow<PredictionRecord>(r)),
+  predictions: () =>
+    fetch('/api/predictions').then((r) => jsonOrThrow<PredictionRecord[]>(r)),
+  prediction: (id: number) =>
+    fetch(`/api/predictions/${id}`).then((r) => jsonOrThrow<PredictionRecord>(r)),
 }
